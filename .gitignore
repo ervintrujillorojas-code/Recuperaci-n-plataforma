@@ -1,0 +1,5 @@
+# Solo se publica el dashboard. Todo lo demás (Excel, CSVs con datos reales,
+# config con el PAT de Tableau, script de extracción) se queda local.
+*
+!.gitignore
+!dashboard_recuperaciones_sept2026 (1).html
