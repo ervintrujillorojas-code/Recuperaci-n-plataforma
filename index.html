@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dashboard de Recuperaciones · Septiembre 2026</title>
+<title>Dashboard de Recuperaciones · 2026</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
@@ -167,6 +167,27 @@
   .badge.no{background:var(--rojo-suave); color:var(--rojo-oscuro);}
 
   footer{text-align:center; font-size:12px; color:var(--gris-400); margin-top:20px;}
+  /* PESTAÑAS */
+  .tabs{
+    display:flex; flex-wrap:wrap; gap:6px; background:var(--blanco); border-radius:var(--radio);
+    box-shadow:var(--sombra); padding:6px; margin-bottom:24px;
+  }
+  .tab{
+    border:0; background:transparent; cursor:pointer; font:inherit; font-size:14px; font-weight:700;
+    color:var(--gris-600); padding:10px 18px; border-radius:10px; display:flex; align-items:center; gap:8px;
+  }
+  .tab:hover{background:var(--gris-100); color:var(--gris-950);}
+  .tab.activa{background:var(--gris-950); color:var(--blanco);}
+  .chip{white-space:nowrap; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; padding:2px 8px; border-radius:20px;}
+  .chip.cerrado{background:var(--verde-suave); color:var(--verde);}
+  .chip.en_curso{background:var(--rojo-suave); color:var(--rojo-oscuro);}
+  .tab-panel{display:none;}
+  .tab-panel.activa{display:block;}
+  .grid-2.parejo{grid-template-columns:1fr 1fr;}
+  @media(max-width:1000px){.grid-2.parejo{grid-template-columns:1fr;}}
+  .tabla-scroll{overflow-x:auto;}
+  .neg{color:var(--rojo);}
+  .pos{color:var(--verde);}
 </style>
 </head>
 <body>
@@ -174,375 +195,338 @@
 
   <header>
     <h1>DASHBOARD DE RECUPERACIONES</h1>
-    <div class="sub">Septiembre 2026 · Seguimiento de meta mensual</div>
-    <div class="corte">
-      <span>Corte: <b id="hdr-corte">14 de septiembre de 2026</b></span>
-      <span>Días hábiles del mes: <b id="hdr-dias-habiles">--</b></span>
-      <span>Días hábiles transcurridos: <b id="hdr-dias-transc">--</b></span>
-    </div>
-    <div class="frase" id="hdr-frase">Meta mensual: $919 M | Recuperación acumulada: $498 M</div>
+    <div class="sub" id="hdr-sub">Seguimiento de metas mensuales</div>
+    <div class="corte" id="hdr-corte"></div>
+    <div class="frase" id="hdr-frase"></div>
   </header>
 
-  <!-- RESUMEN DE PARÁMETROS (fijo, ya no editable) -->
+  <nav class="tabs" id="tabs"></nav>
+  <div id="paneles"></div>
+
+  <footer>Datos oficiales de Tableau (GestindevErvin) + registro Excel · Se actualiza automáticamente todos los días a las 8:30 a. m.</footer>
+</div>
+
+<script>
+/* ============================================================
+   DATOS — un objeto por mes. Este bloque lo reescribe
+   automatizacion/actualizar_y_publicar.py en cada corrida;
+   no editar a mano.
+   ============================================================ */
+/* <<DATOS-MESES>> */
+const MESES = [
+  {
+    "clave": "2026-09",
+    "anio": 2026,
+    "mes": 9,
+    "nombre": "Septiembre",
+    "estado": "cerrado",
+    "fechaCorte": "2026-09-30",
+    "fechaCaptura": "2026-10-01",
+    "metaTotal": 919,
+    "recupReal": 1100.65,
+    "rubros": [
+      {
+        "nombre": "Descuento Proveedor",
+        "meta": 321.65,
+        "real": 371.28
+      },
+      {
+        "nombre": "Traslado Outlet",
+        "meta": 137.85,
+        "real": 101.09
+      },
+      {
+        "nombre": "Traslado Plataforma",
+        "meta": 459.5,
+        "real": 628.29
+      }
+    ],
+    "proyeccionEsperadaPct": 1.192
+  },
+  {
+    "clave": "2026-10",
+    "anio": 2026,
+    "mes": 10,
+    "nombre": "Octubre",
+    "estado": "en_curso",
+    "fechaCorte": "2026-10-01",
+    "fechaCaptura": "2026-10-01",
+    "metaTotal": 919,
+    "recupReal": 0.0,
+    "rubros": [
+      {
+        "nombre": "Descuento Proveedor",
+        "meta": 321.65,
+        "real": 0.0
+      },
+      {
+        "nombre": "Traslado Outlet",
+        "meta": 137.85,
+        "real": 0.0
+      },
+      {
+        "nombre": "Traslado Plataforma",
+        "meta": 459.5,
+        "real": 0.0
+      }
+    ]
+  }
+];
+/* <</DATOS-MESES>> */
+
+/* ============================================================
+   CONFIGURACIÓN — umbrales del semáforo
+   ============================================================ */
+const UMBRALES = {
+  amarillo: -0.05,  // desviación entre -5% y 0% del esperado -> amarillo
+  rojo: -0.15       // desviación menor a -15% del esperado -> rojo (entre -5% y -15% también amarillo)
+};
+const COLORES_RUBRO = ['#D0021B','#5B5F66','#B98900'];
+
+/* ---------- utilidades ---------- */
+function esDiaHabil(d){
+  const dia = d.getDay(); // 0 domingo, 6 sabado
+  return dia !== 0 && dia !== 6;
+}
+function diasHabilesMes(anio, mes){ // mes 1-12
+  const dias = [];
+  const fecha = new Date(anio, mes-1, 1);
+  while(fecha.getMonth() === mes-1){
+    if(esDiaHabil(fecha)) dias.push(new Date(fecha));
+    fecha.setDate(fecha.getDate()+1);
+  }
+  return dias;
+}
+const aFecha = iso => new Date(iso + "T00:00:00");
+function fmtM(v){
+  const signo = v < 0 ? "-" : "";
+  return signo + "$" + Math.abs(Math.round(v)).toLocaleString('es-CO') + " M";
+}
+function fmtN(v){
+  return v.toLocaleString('es-CO', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function fmtPct(v){
+  return (v*100).toLocaleString('es-CO', {minimumFractionDigits:1, maximumFractionDigits:1}) + "%";
+}
+function fmtFechaLarga(d){
+  return d.toLocaleDateString('es-CO', {day:'numeric', month:'long', year:'numeric'});
+}
+function clasePct(p){
+  return p < 0.5 ? " pct-bajo" : (p >= 1 ? " pct-alto" : "");
+}
+function idTab(m){ return m.nombre.toLowerCase() + "-" + m.anio; }
+
+const opcionesTooltipM = {callbacks:{label:(ctx)=> ctx.dataset.label + ": " + fmtM(ctx.parsed.y)}};
+const etiquetasBarras = {
+  id:'etiquetasBarras',
+  afterDatasetsDraw(chart){
+    if(chart.options.scales.x.stacked) return;
+    const {ctx} = chart;
+    chart.data.datasets.forEach((ds, dsIndex)=>{
+      chart.getDatasetMeta(dsIndex).data.forEach((bar, i)=>{
+        ctx.save();
+        ctx.font = "11px Segoe UI";
+        ctx.fillStyle = "#33363C";
+        ctx.textAlign = "center";
+        ctx.fillText(fmtM(ds.data[i]), bar.x, bar.y - 6);
+        ctx.restore();
+      });
+    });
+  }
+};
+
+/* ============================================================
+   CÁLCULOS POR MES
+   ============================================================ */
+function calcularMes(m){
+  const fechaCorte = aFecha(m.fechaCorte);
+  const diasHabiles = diasHabilesMes(m.anio, m.mes);
+  const totalDias = diasHabiles.length;
+  const transcurridos = diasHabiles.filter(d => d <= fechaCorte).length;
+  const restantes = Math.max(totalDias - transcurridos, 0);
+  const metaDiaria = m.metaTotal / totalDias;
+  const esperado = metaDiaria * transcurridos;
+  const brecha = m.recupReal - esperado;
+  const saldo = m.metaTotal - m.recupReal;
+  const ritmo = transcurridos > 0 ? m.recupReal / transcurridos : 0;
+  const proyeccion = ritmo * totalDias;
+  return {
+    cerrado: m.estado === "cerrado",
+    fechaCorte, diasHabiles, totalDias, transcurridos, restantes, metaDiaria, esperado,
+    pctEsperado: m.metaTotal ? esperado / m.metaTotal : 0,
+    pct: m.metaTotal ? m.recupReal / m.metaTotal : 0,
+    brecha,
+    desviacion: esperado > 0 ? brecha / esperado : 0,
+    saldo,
+    metaDiariaRestante: restantes > 0 ? saldo / restantes : 0,
+    ritmo, proyeccion,
+    difProy: proyeccion - m.metaTotal
+  };
+}
+
+function semaforo(desviacion){
+  if(desviacion >= UMBRALES.amarillo) return ["verde", "En línea"];
+  if(desviacion >= UMBRALES.rojo) return ["amarillo", "Alerta"];
+  return ["rojo", "Crítico"];
+}
+
+/* ============================================================
+   PESTAÑA DE MES
+   ============================================================ */
+function htmlMes(m, c){
+  const sumaMeta = m.rubros.reduce((a,r)=>a+r.meta,0);
+  const sumaReal = m.rubros.reduce((a,r)=>a+r.real,0);
+  const okMeta = Math.abs(sumaMeta - m.metaTotal) <= 0.5;
+  const okReal = Math.abs(sumaReal - m.recupReal) <= 0.5;
+  const nombreMes = `${m.nombre.toLowerCase()} ${m.anio}`;
+
+  const filasRubros = m.rubros.map(r=>{
+    const p = r.meta ? r.real/r.meta : 0;
+    return `<tr><td>${r.nombre}</td><td class="num">${fmtN(r.meta)}</td><td class="num">${fmtN(r.real)}</td>
+      <td class="num"><span class="pct-tag${clasePct(p)}">${fmtPct(p)}</span></td></tr>`;
+  }).join("");
+
+  const tarjetasRubros = m.rubros.map(r=>{
+    const p = r.meta ? r.real/r.meta : 0;
+    const saldo = r.meta - r.real;
+    return `<div class="rubro-card">
+      <h3>${r.nombre}</h3>
+      <div class="rubro-fila"><span>Meta mensual</span><b>${fmtM(r.meta)}</b></div>
+      <div class="rubro-fila"><span>Recuperación acumulada</span><b>${fmtM(r.real)}</b></div>
+      <div class="rubro-fila"><span>${saldo < 0 ? "Excedente sobre la meta" : "Saldo pendiente"}</span><b>${fmtM(Math.abs(saldo))}</b></div>
+      <div class="rubro-fila"><span>Participación en meta total</span><b>${fmtPct(m.metaTotal ? r.meta/m.metaTotal : 0)}</b></div>
+      <div class="barra-bg"><div class="barra-fill" style="width:${Math.min(p*100,100)}%"></div></div>
+      <div class="rubro-pct">${fmtPct(p)} cumplido</div>
+    </div>`;
+  }).join("");
+
+  // Semáforo: en curso -> desviación vs. esperado; cerrado -> resultado final vs. meta
+  let luz, estadoTxt, msg;
+  if(c.cerrado){
+    [luz, estadoTxt] = semaforo(c.pct - 1);
+    estadoTxt = c.pct >= 1 ? "Meta cumplida" : estadoTxt;
+    msg = `${m.nombre} cerró en ${fmtM(m.recupReal)}, ${fmtPct(c.pct)} de la meta (${fmtM(Math.abs(c.saldo))} ${c.saldo <= 0 ? "por encima" : "por debajo"} de los ${fmtM(m.metaTotal)}).`;
+  } else if(m.recupReal === 0){
+    [luz, estadoTxt] = ["amarillo", "Sin datos aún"];
+    msg = `Tableau todavía no registra recuperaciones de ${nombreMes} (captura del ${fmtFechaLarga(aFecha(m.fechaCaptura))}).`;
+  } else {
+    [luz, estadoTxt] = semaforo(c.desviacion);
+    msg = `Al corte del ${fmtFechaLarga(c.fechaCorte)}, la recuperación se encuentra ${fmtM(Math.abs(c.brecha))} ${c.brecha >= 0 ? "por encima" : "por debajo"} de lo esperado (${fmtPct(Math.abs(c.desviacion))}).`;
+  }
+
+  const consultoria = m.proyeccionEsperadaPct ? `
+    <div class="proy-item" style="margin-top:14px; max-width:620px; background:var(--rojo-suave); border:1px solid #f3b6bd;">
+      <div class="l" style="color:var(--rojo-oscuro);">Proyección de cierre esperada (consultoría)</div>
+      <div class="v" style="color:var(--rojo-oscuro);">${c.cerrado
+        ? `Se esperaba cerrar en ${fmtPct(m.proyeccionEsperadaPct)} (~${fmtM(m.metaTotal*m.proyeccionEsperadaPct)}) · cierre real: ${fmtPct(c.pct)}`
+        : `Se espera cerrar ${m.nombre.toLowerCase()} en ${fmtPct(m.proyeccionEsperadaPct)} de la meta (~${fmtM(m.metaTotal*m.proyeccionEsperadaPct)})`}</div>
+    </div>` : "";
+
+  const bloqueFinal = c.cerrado ? `
+    <h2 style="margin:0 0 4px; font-size:17px;">Resultado de cierre</h2>
+    <div class="card-sub">Cifras finales de ${nombreMes} (captura del ${fmtFechaLarga(aFecha(m.fechaCaptura))})</div>
+    <div class="proy-grid">
+      <div class="proy-item"><div class="l">Meta</div><div class="v">${fmtM(m.metaTotal)}</div></div>
+      <div class="proy-item"><div class="l">Cierre real</div><div class="v">${fmtM(m.recupReal)}</div></div>
+      <div class="proy-item"><div class="l">Diferencia vs. meta</div><div class="v ${c.saldo <= 0 ? "pos" : "neg"}">${c.saldo <= 0 ? "+" : ""}${fmtM(-c.saldo)}</div></div>
+      <div class="proy-item"><div class="l">Estado final</div><div class="v"><span class="badge ${c.saldo <= 0 ? "ok" : "no"}">${c.saldo <= 0 ? "Cumplió" : "No cumplió"}</span></div></div>
+    </div>${consultoria}` : `
+    <h2 style="margin:0 0 4px; font-size:17px;">Proyección de cierre</h2>
+    <div class="card-sub">Estimación basada en el ritmo promedio de recuperación alcanzado hasta el corte</div>
+    <div class="proy-grid">
+      <div class="proy-item"><div class="l">Meta</div><div class="v">${fmtM(m.metaTotal)}</div></div>
+      <div class="proy-item"><div class="l">Proyección de cierre</div><div class="v">${fmtM(c.proyeccion)}</div></div>
+      <div class="proy-item"><div class="l">Diferencia vs. meta</div><div class="v ${c.difProy >= 0 ? "pos" : "neg"}">${c.difProy >= 0 ? "+" : ""}${fmtM(c.difProy)}</div></div>
+      <div class="proy-item"><div class="l">Estado proyectado</div><div class="v"><span class="badge ${c.difProy >= 0 ? "ok" : "no"}">${c.difProy >= 0 ? "Cumple" : "No cumple"}</span></div></div>
+    </div>
+    <div class="proy-item" style="margin-top:14px; max-width:420px;">
+      <div class="l">Meta diaria restante para cerrar en ${fmtM(m.metaTotal)}</div>
+      <div class="v">${fmtM(c.metaDiariaRestante)} / día hábil</div>
+    </div>${consultoria}`;
+
+  return `
   <div class="panel-control">
     <h3>Resumen de parámetros</h3>
-    <div class="fuente">Datos oficiales al corte · fuente: Tableau (Gestión Devs) + registro Excel de recuperaciones</div>
-
+    <div class="fuente">Datos oficiales al corte · fuente: Tableau (GestindevErvin) + registro Excel de recuperaciones</div>
     <div class="resumen-stats">
-      <div class="stat"><span class="stat-label">Meta mensual total</span><span class="stat-valor">$919 M</span></div>
-      <div class="stat"><span class="stat-label">Recuperación acumulada</span><span class="stat-valor stat-verde">$1100,65 M</span></div>
-      <div class="stat"><span class="stat-label">% de avance</span><span class="stat-valor">119,8%</span></div>
-      <div class="stat"><span class="stat-label">Fecha de corte</span><span class="stat-valor">30/09/2026</span></div>
+      <div class="stat"><span class="stat-label">Meta mensual total</span><span class="stat-valor">${fmtM(m.metaTotal)}</span></div>
+      <div class="stat"><span class="stat-label">Recuperación acumulada</span><span class="stat-valor stat-verde">$${fmtN(m.recupReal)} M</span></div>
+      <div class="stat"><span class="stat-label">% de avance</span><span class="stat-valor">${fmtPct(c.pct)}</span></div>
+      <div class="stat"><span class="stat-label">Fecha de corte</span><span class="stat-valor">${c.fechaCorte.toLocaleDateString('es-CO')}</span></div>
     </div>
-
-    <table class="tabla-rubros">
-      <thead>
-        <tr>
-          <th>Rubro</th>
-          <th class="num">Meta ($M)</th>
-          <th class="num">Recuperado ($M)</th>
-          <th class="num">% Avance</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Descuento Proveedor</td>
-          <td class="num">321,65</td>
-          <td class="num">371,28</td>
-          <td class="num"><span class="pct-tag pct-alto">115,4%</span></td>
-        </tr>
-        <tr>
-          <td>Traslado Outlet</td>
-          <td class="num">137,85</td>
-          <td class="num">101,09</td>
-          <td class="num"><span class="pct-tag">73,3%</span></td>
-        </tr>
-        <tr>
-          <td>Traslado Plataforma</td>
-          <td class="num">459,5</td>
-          <td class="num">628,29</td>
-          <td class="num"><span class="pct-tag pct-alto">136,7%</span></td>
-        </tr>
-      </tbody>
-      <tfoot>
-        <tr>
-          <td>Total</td>
-          <td class="num">919</td>
-          <td class="num">1100,65</td>
-          <td class="num">119,8%</td>
-        </tr>
-      </tfoot>
-    </table>
-
-    <div class="alerta-cuadre" id="alerta-meta"></div>
-    <div class="alerta-cuadre" id="alerta-real"></div>
+    <div class="tabla-scroll"><table class="tabla-rubros">
+      <thead><tr><th>Rubro</th><th class="num">Meta ($M)</th><th class="num">Recuperado ($M)</th><th class="num">% Avance</th></tr></thead>
+      <tbody>${filasRubros}</tbody>
+      <tfoot><tr><td>Total</td><td class="num">${fmtN(m.metaTotal)}</td><td class="num">${fmtN(m.recupReal)}</td><td class="num">${fmtPct(c.pct)}</td></tr></tfoot>
+    </table></div>
+    <div class="alerta-cuadre mostrar ${okMeta ? "ok" : "err"}">${okMeta
+      ? `✓ La suma de metas por rubro cuadra con la meta total (${fmtM(m.metaTotal)}).`
+      : `⚠ La suma de metas por rubro ($${fmtN(sumaMeta)} M) no coincide con la meta total ($${fmtN(m.metaTotal)} M).`}</div>
+    <div class="alerta-cuadre mostrar ${okReal ? "ok" : "err"}">${okReal
+      ? `✓ La suma de recuperación por rubro cuadra con el acumulado reportado ($${fmtN(m.recupReal)} M).`
+      : `⚠ La suma de recuperación por rubro ($${fmtN(sumaReal)} M) no coincide con el acumulado reportado ($${fmtN(m.recupReal)} M).`}</div>
   </div>
 
-  <!-- KPIs -->
   <div class="kpis">
-    <div class="kpi rojo">
-      <div class="label">Meta mensual</div>
-      <div class="valor" id="kpi-meta">$919 M</div>
-    </div>
-    <div class="kpi verde">
-      <div class="label">Recuperación acumulada</div>
-      <div class="valor verde-txt" id="kpi-real">$498 M</div>
-    </div>
-    <div class="kpi gris">
-      <div class="label">% Cumplimiento</div>
-      <div class="valor" id="kpi-pct">--%</div>
-    </div>
-    <div class="kpi gris">
-      <div class="label">Meta esperada al corte</div>
-      <div class="valor" id="kpi-esperado">$-- M</div>
-      <div class="nota" id="kpi-esperado-pct">-- % de la meta</div>
-    </div>
-    <div class="kpi rojo">
-      <div class="label">Brecha vs. esperado</div>
-      <div class="valor" id="kpi-brecha">$-- M</div>
-    </div>
-    <div class="kpi gris">
-      <div class="label">Saldo pendiente</div>
-      <div class="valor" id="kpi-saldo">$-- M</div>
-      <div class="nota" id="kpi-meta-diaria-rest">Meta diaria restante: $-- M</div>
-    </div>
+    <div class="kpi rojo"><div class="label">Meta mensual</div><div class="valor">${fmtM(m.metaTotal)}</div></div>
+    <div class="kpi verde"><div class="label">Recuperación acumulada</div><div class="valor verde-txt">${fmtM(m.recupReal)}</div></div>
+    <div class="kpi gris"><div class="label">% Cumplimiento</div><div class="valor">${fmtPct(c.pct)}</div></div>
+    <div class="kpi gris"><div class="label">Meta esperada al corte</div><div class="valor">${fmtM(c.esperado)}</div><div class="nota">${fmtPct(c.pctEsperado)} de la meta</div></div>
+    <div class="kpi rojo"><div class="label">Brecha vs. esperado</div><div class="valor ${c.brecha >= 0 ? "verde-txt" : "rojo-txt"}">${c.brecha >= 0 ? "+" : ""}${fmtM(c.brecha)}</div></div>
+    <div class="kpi gris"><div class="label">${c.saldo < 0 ? "Excedente sobre la meta" : "Saldo pendiente"}</div><div class="valor">${fmtM(Math.abs(c.saldo))}</div>
+      <div class="nota">${c.cerrado ? "Mes cerrado" : `Meta diaria restante: ${fmtM(c.metaDiariaRestante)}`}</div></div>
   </div>
 
-  <!-- SEMAFORO -->
   <div class="semaforo">
-    <div class="luz" id="luz"></div>
-    <div class="texto"><span class="estado" id="semaforo-estado">--</span><span id="semaforo-msg">Cargando evaluación...</span></div>
+    <div class="luz ${luz}"></div>
+    <div class="texto"><span class="estado">${estadoTxt}</span><span>${msg}</span></div>
   </div>
 
-  <!-- GRAFICAS PRINCIPALES -->
   <div class="grid-2">
     <div class="card">
       <h2>Avance real vs. esperado</h2>
-      <div class="card-sub">Recuperación acumulada por día hábil de septiembre 2026 (línea punteada roja marca el corte)</div>
-      <div class="chart-box"><canvas id="chartAvance"></canvas></div>
+      <div class="card-sub">Recuperación acumulada por día hábil de ${nombreMes}</div>
+      <div class="chart-box"><canvas data-chart="avance"></canvas></div>
     </div>
     <div class="card">
       <h2>Distribución de la meta</h2>
-      <div class="card-sub">Participación de cada rubro sobre los $919 M</div>
-      <div class="chart-box small"><canvas id="chartDona"></canvas></div>
+      <div class="card-sub">Participación de cada rubro sobre los ${fmtM(m.metaTotal)}</div>
+      <div class="chart-box small"><canvas data-chart="dona"></canvas></div>
     </div>
   </div>
 
   <div class="card" style="margin-bottom:24px;">
     <h2>Avance por rubro</h2>
     <div class="card-sub">Meta vs. recuperación real y % de cumplimiento por rubro</div>
-    <div class="chart-box"><canvas id="chartRubros"></canvas></div>
+    <div class="chart-box"><canvas data-chart="rubros"></canvas></div>
   </div>
 
-  <!-- DETALLE RUBROS -->
-  <div class="rubros" id="rubros-detalle"></div>
+  <div class="rubros">${tarjetasRubros}</div>
 
-  <!-- PROYECCION -->
-  <div class="proyeccion">
-    <h2 style="margin:0 0 4px; font-size:17px;">Proyección de cierre</h2>
-    <div class="card-sub">Estimación basada en el ritmo promedio de recuperación alcanzado hasta el corte</div>
-    <div class="proy-grid">
-      <div class="proy-item"><div class="l">Meta</div><div class="v" id="proy-meta">$-- M</div></div>
-      <div class="proy-item"><div class="l">Proyección de cierre</div><div class="v" id="proy-cierre">$-- M</div></div>
-      <div class="proy-item"><div class="l">Diferencia vs. meta</div><div class="v" id="proy-dif">$-- M</div></div>
-      <div class="proy-item"><div class="l">Estado proyectado</div><div class="v"><span class="badge" id="proy-badge">--</span></div></div>
-    </div>
-    <div class="proy-item" style="margin-top:14px; max-width:420px;">
-      <div class="l">Meta diaria restante para cerrar en $919 M</div>
-      <div class="v" id="proy-meta-diaria">$-- M / día hábil</div>
-    </div>
-    <div class="proy-item" style="margin-top:14px; max-width:520px; background:var(--rojo-suave); border:1px solid #f3b6bd;">
-      <div class="l" style="color:var(--rojo-oscuro);">Proyección de cierre esperada</div>
-      <div class="v" style="color:var(--rojo-oscuro);" id="proy-esperada-119">Se espera cerrar septiembre en 119,2% de la meta (~$-- M)</div>
-    </div>
-  </div>
-
-  <footer>Dashboard con datos oficiales de recuperaciones · Para actualizarlo, editar la constante DATOS en el script con la extracción más reciente</footer>
-</div>
-
-<script>
-/* ============================================================
-   CONFIGURACIÓN EDITABLE — umbrales del semáforo
-   ============================================================ */
-const UMBRALES = {
-  amarillo: -0.05,  // desviación entre -5% y 0% del esperado -> amarillo
-  rojo: -0.15       // desviación menor a -15% del esperado -> rojo (entre -5% y -15% también amarillo)
-};
-
-/* ============================================================
-   DATOS — fuente: Tableau (Gestión Devs) + registro Excel
-   Ya no son editables desde la UI; actualizar aquí cuando llegue
-   una extracción nueva.
-   ============================================================ */
-const DATOS = {
-  metaTotal: 919,
-  recupReal: 1100.65,
-  fechaCorte: "2026-09-30",
-  rubros: [
-    { nombre:"Descuento Proveedor", meta: 321.65, real: 371.28 },
-    { nombre:"Traslado Outlet",     meta: 137.85, real: 101.09 },
-    { nombre:"Traslado Plataforma", meta: 459.5, real: 628.29 }
-  ]
-};
-
-let chartAvance, chartDona, chartRubros;
-
-/* ---------- utilidades de fecha ---------- */
-function esDiaHabil(d){
-  const dia = d.getDay(); // 0 domingo, 6 sabado
-  return dia !== 0 && dia !== 6;
+  <div class="proyeccion">${bloqueFinal}</div>`;
 }
 
-function generarDiasHabilesSeptiembre(anio){
-  const dias = [];
-  const fecha = new Date(anio, 8, 1); // mes 8 = septiembre (0-index)
-  while(fecha.getMonth() === 8){
-    if(esDiaHabil(fecha)) dias.push(new Date(fecha));
-    fecha.setDate(fecha.getDate()+1);
-  }
-  return dias;
-}
+function chartsMes(panel, m, c){
+  const canvas = k => panel.querySelector(`[data-chart="${k}"]`);
 
-function fmtM(v){
-  const signo = v < 0 ? "-" : "";
-  return signo + "$" + Math.abs(Math.round(v)) + " M";
-}
-function fmtPct(v){
-  return (v*100).toFixed(1) + "%";
-}
-function fmtFechaLarga(d){
-  return d.toLocaleDateString('es-CO', {day:'numeric', month:'long', year:'numeric'});
-}
+  // Real: interpolación lineal al ritmo promedio hasta el corte; el punto del corte es el valor exacto.
+  const acumReal = c.diasHabiles.map((d,i) => d > c.fechaCorte ? null : c.ritmo * (i+1));
+  if(c.transcurridos > 0) acumReal[c.transcurridos-1] = m.recupReal;
 
-/* ============================================================
-   FUNCIÓN PRINCIPAL
-   ============================================================ */
-function actualizarDashboard(){
-  // --- Datos fijos (ver constante DATOS) ---
-  const metaTotal = DATOS.metaTotal;
-  const recupReal = DATOS.recupReal;
-  const fechaCorte = new Date(DATOS.fechaCorte + "T00:00:00");
-
-  const rubros = DATOS.rubros;
-
-  // --- Validaciones de cuadre ---
-  const sumaMetaRubros = rubros.reduce((a,r)=>a+r.meta,0);
-  const sumaRealRubros = rubros.reduce((a,r)=>a+r.real,0);
-
-  const alertaMeta = document.getElementById('alerta-meta');
-  const alertaReal = document.getElementById('alerta-real');
-
-  if(Math.abs(sumaMetaRubros - metaTotal) > 0.5){
-    alertaMeta.className = "alerta-cuadre mostrar err";
-    alertaMeta.textContent = `⚠ La suma de metas por rubro ($${sumaMetaRubros} M) no coincide con la meta total ($${metaTotal} M). Diferencia: $${(sumaMetaRubros-metaTotal).toFixed(1)} M.`;
-  } else {
-    alertaMeta.className = "alerta-cuadre mostrar ok";
-    alertaMeta.textContent = `✓ La suma de metas por rubro cuadra con la meta total ($${metaTotal} M).`;
-  }
-
-  if(Math.abs(sumaRealRubros - recupReal) > 0.5){
-    alertaReal.className = "alerta-cuadre mostrar err";
-    alertaReal.textContent = `⚠ La suma de recuperación por rubro ($${sumaRealRubros} M) no coincide con la recuperación acumulada reportada ($${recupReal} M). Diferencia: $${(sumaRealRubros-recupReal).toFixed(1)} M.`;
-  } else {
-    alertaReal.className = "alerta-cuadre mostrar ok";
-    alertaReal.textContent = `✓ La suma de recuperación por rubro cuadra con el acumulado reportado ($${recupReal} M).`;
-  }
-
-  // --- Días hábiles ---
-  const diasHabiles = generarDiasHabilesSeptiembre(2026);
-  const totalDiasHabiles = diasHabiles.length;
-  const diasTranscurridos = diasHabiles.filter(d => d <= fechaCorte).length;
-  const diasRestantes = Math.max(totalDiasHabiles - diasTranscurridos, 0);
-
-  const metaDiaria = metaTotal / totalDiasHabiles;
-  const metaEsperadaCorte = metaDiaria * diasTranscurridos;
-  const pctEsperadoCorte = metaEsperadaCorte / metaTotal;
-
-  const pctCumplimiento = metaTotal > 0 ? recupReal / metaTotal : 0;
-  const brecha = recupReal - metaEsperadaCorte;
-  const pctDesviacion = metaEsperadaCorte > 0 ? brecha / metaEsperadaCorte : 0;
-  const saldoPendiente = metaTotal - recupReal;
-  const metaDiariaRestante = diasRestantes > 0 ? saldoPendiente / diasRestantes : 0;
-
-  // --- Header ---
-  document.getElementById('hdr-corte').textContent = fmtFechaLarga(fechaCorte);
-  document.getElementById('hdr-dias-habiles').textContent = totalDiasHabiles;
-  document.getElementById('hdr-dias-transc').textContent = diasTranscurridos;
-  document.getElementById('hdr-frase').textContent = `Meta mensual: ${fmtM(metaTotal)} | Recuperación acumulada: ${fmtM(recupReal)}`;
-
-  // --- KPIs ---
-  document.getElementById('kpi-meta').textContent = fmtM(metaTotal);
-  document.getElementById('kpi-real').textContent = fmtM(recupReal);
-  document.getElementById('kpi-pct').textContent = fmtPct(pctCumplimiento);
-  document.getElementById('kpi-esperado').textContent = fmtM(metaEsperadaCorte);
-  document.getElementById('kpi-esperado-pct').textContent = fmtPct(pctEsperadoCorte) + " de la meta";
-  document.getElementById('kpi-brecha').textContent = (brecha>=0?"+":"") + fmtM(brecha);
-  document.getElementById('kpi-brecha').className = "valor " + (brecha>=0 ? "verde-txt" : "rojo-txt");
-  document.getElementById('kpi-saldo').textContent = fmtM(saldoPendiente);
-  document.getElementById('kpi-meta-diaria-rest').textContent = `Meta diaria restante: ${fmtM(metaDiariaRestante)}`;
-
-  // --- Semáforo ---
-  const luz = document.getElementById('luz');
-  const estado = document.getElementById('semaforo-estado');
-  const msg = document.getElementById('semaforo-msg');
-  let colorClase, estadoTxt;
-  if(pctDesviacion >= UMBRALES.amarillo){
-    colorClase = "verde"; estadoTxt = "En línea";
-  } else if(pctDesviacion >= UMBRALES.rojo){
-    colorClase = "amarillo"; estadoTxt = "Alerta";
-  } else {
-    colorClase = "rojo"; estadoTxt = "Crítico";
-  }
-  luz.className = "luz " + colorClase;
-  estado.textContent = estadoTxt;
-  const signoBrecha = brecha >= 0 ? "por encima" : "por debajo";
-  msg.textContent = `Al corte del ${fmtFechaLarga(fechaCorte)}, la recuperación se encuentra ${fmtM(Math.abs(brecha))} ${signoBrecha} de lo esperado (${fmtPct(Math.abs(pctDesviacion))}).`;
-
-  // --- Proyección de cierre ---
-  const ritmoDiarioReal = diasTranscurridos > 0 ? recupReal / diasTranscurridos : 0;
-  const proyeccionCierre = ritmoDiarioReal * totalDiasHabiles;
-  const difProyMeta = proyeccionCierre - metaTotal;
-  document.getElementById('proy-meta').textContent = fmtM(metaTotal);
-  document.getElementById('proy-cierre').textContent = fmtM(proyeccionCierre);
-  document.getElementById('proy-dif').textContent = (difProyMeta>=0?"+":"") + fmtM(difProyMeta);
-  document.getElementById('proy-dif').style.color = difProyMeta>=0 ? "var(--verde)" : "var(--rojo)";
-  const badge = document.getElementById('proy-badge');
-  if(difProyMeta >= 0){ badge.textContent = "Cumple"; badge.className = "badge ok"; }
-  else { badge.textContent = "No cumple"; badge.className = "badge no"; }
-  document.getElementById('proy-meta-diaria').textContent = `${fmtM(metaDiariaRestante)} / día hábil`;
-
-  // --- Proyección de cierre esperada (dato de referencia: 119.2% de la meta) ---
-  const PROYECCION_ESPERADA_PCT = 1.192;
-  const valorProyeccionEsperada = metaTotal * PROYECCION_ESPERADA_PCT;
-  document.getElementById('proy-esperada-119').textContent =
-    `Se espera cerrar septiembre en ${fmtPct(PROYECCION_ESPERADA_PCT)} de la meta (~${fmtM(valorProyeccionEsperada)})`;
-
-  // --- Detalle por rubro (tarjetas) ---
-  const cont = document.getElementById('rubros-detalle');
-  cont.innerHTML = "";
-  rubros.forEach(r=>{
-    const pct = r.meta>0 ? r.real/r.meta : 0;
-    const saldo = r.meta - r.real;
-    const participacion = metaTotal>0 ? r.meta/metaTotal : 0;
-    const div = document.createElement('div');
-    div.className = "rubro-card";
-    div.innerHTML = `
-      <h3>${r.nombre}</h3>
-      <div class="rubro-fila"><span>Meta mensual</span><b>${fmtM(r.meta)}</b></div>
-      <div class="rubro-fila"><span>Recuperación acumulada</span><b>${fmtM(r.real)}</b></div>
-      <div class="rubro-fila"><span>Saldo pendiente</span><b>${fmtM(saldo)}</b></div>
-      <div class="rubro-fila"><span>Participación en meta total</span><b>${fmtPct(participacion)}</b></div>
-      <div class="barra-bg"><div class="barra-fill" style="width:${Math.min(pct*100,100)}%"></div></div>
-      <div class="rubro-pct">${fmtPct(pct)} cumplido</div>
-    `;
-    cont.appendChild(div);
-  });
-
-  // --- Gráfica: avance real vs esperado ---
-  const labelsDias = diasHabiles.map(d => d.getDate());
-  const acumEsperado = diasHabiles.map((d,i) => metaDiaria * (i+1));
-  // real: interpolación lineal simple hasta el corte, luego null
-  const acumReal = diasHabiles.map((d,i) => {
-    if(d > fechaCorte) return null;
-    return ritmoDiarioReal * (i+1);
-  });
-  // Forzamos el último punto real (el de corte) al valor exacto reportado
-  const idxCorte = diasHabiles.findIndex(d => d.getTime() === diasHabiles.filter(x=>x<=fechaCorte).slice(-1)[0]?.getTime());
-  if(idxCorte >= 0) acumReal[idxCorte] = recupReal;
-
-  if(chartAvance) chartAvance.destroy();
-  chartAvance = new Chart(document.getElementById('chartAvance'), {
+  new Chart(canvas("avance"), {
     type:'line',
     data:{
-      labels: labelsDias,
+      labels: c.diasHabiles.map(d => d.getDate()),
       datasets:[
-        {
-          label:'Esperado (meta lineal)',
-          data: acumEsperado,
-          borderColor: '#9AA0A8',
-          backgroundColor:'transparent',
-          borderDash:[6,4],
-          pointRadius:0,
-          tension:0
-        },
-        {
-          label:'Real acumulado',
-          data: acumReal,
-          borderColor:'#D0021B',
-          backgroundColor:'rgba(208,2,27,0.08)',
-          fill:true,
-          pointRadius:3,
-          tension:0.15,
-          spanGaps:true
-        }
+        {label:'Esperado (meta lineal)', data: c.diasHabiles.map((d,i) => c.metaDiaria*(i+1)),
+         borderColor:'#9AA0A8', backgroundColor:'transparent', borderDash:[6,4], pointRadius:0, tension:0},
+        {label:'Real acumulado', data: acumReal, borderColor:'#D0021B', backgroundColor:'rgba(208,2,27,0.08)',
+         fill:true, pointRadius:3, tension:0.15, spanGaps:true}
       ]
     },
     options:{
       responsive:true, maintainAspectRatio:false,
-      plugins:{
-        legend:{position:'bottom'},
-        tooltip:{callbacks:{label:(ctx)=> ctx.dataset.label + ": " + fmtM(ctx.parsed.y)}}
-      },
+      plugins:{legend:{position:'bottom'}, tooltip:opcionesTooltipM},
       scales:{
         x:{title:{display:true, text:'Día del mes (días hábiles)'}},
         y:{title:{display:true, text:'$ Millones COP'}, beginAtZero:true}
@@ -550,71 +534,241 @@ function actualizarDashboard(){
     }
   });
 
-  // --- Gráfica: dona distribución meta ---
-  if(chartDona) chartDona.destroy();
-  chartDona = new Chart(document.getElementById('chartDona'), {
+  new Chart(canvas("dona"), {
     type:'doughnut',
     data:{
-      labels: rubros.map(r=>r.nombre),
-      datasets:[{
-        data: rubros.map(r=>r.meta),
-        backgroundColor:['#D0021B','#5B5F66','#B98900'],
-        borderWidth:2,
-        borderColor:'#fff'
-      }]
+      labels: m.rubros.map(r=>r.nombre),
+      datasets:[{data: m.rubros.map(r=>r.meta), backgroundColor:COLORES_RUBRO, borderWidth:2, borderColor:'#fff'}]
     },
     options:{
       responsive:true, maintainAspectRatio:false,
       plugins:{
         legend:{position:'bottom'},
-        tooltip:{callbacks:{label:(ctx)=> ctx.label + ": " + fmtM(ctx.parsed) + " (" + fmtPct(ctx.parsed/metaTotal) + ")"}}
+        tooltip:{callbacks:{label:(ctx)=> ctx.label + ": " + fmtM(ctx.parsed) + " (" + fmtPct(ctx.parsed/m.metaTotal) + ")"}}
       }
     }
   });
 
-  // --- Gráfica: barras por rubro ---
-  if(chartRubros) chartRubros.destroy();
-  chartRubros = new Chart(document.getElementById('chartRubros'), {
+  new Chart(canvas("rubros"), {
     type:'bar',
     data:{
-      labels: rubros.map(r=>r.nombre),
+      labels: m.rubros.map(r=>r.nombre),
       datasets:[
-        {label:'Meta', data: rubros.map(r=>r.meta), backgroundColor:'#E4E6E9'},
-        {label:'Recuperación real', data: rubros.map(r=>r.real), backgroundColor:'#D0021B'}
+        {label:'Meta', data: m.rubros.map(r=>r.meta), backgroundColor:'#E4E6E9'},
+        {label:'Recuperación real', data: m.rubros.map(r=>r.real), backgroundColor:'#D0021B'}
       ]
     },
     options:{
       responsive:true, maintainAspectRatio:false,
-      plugins:{
-        legend:{position:'bottom'},
-        tooltip:{callbacks:{label:(ctx)=> ctx.dataset.label + ": " + fmtM(ctx.parsed.y)}},
-        datalabels:{}
-      },
-      scales:{ y:{title:{display:true, text:'$ Millones COP'}, beginAtZero:true} }
+      plugins:{legend:{position:'bottom'}, tooltip:opcionesTooltipM},
+      scales:{x:{}, y:{title:{display:true, text:'$ Millones COP'}, beginAtZero:true}}
     },
-    plugins:[{
-      id:'etiquetasBarras',
-      afterDatasetsDraw(chart){
-        const {ctx} = chart;
-        chart.data.datasets.forEach((ds, dsIndex)=>{
-          const meta = chart.getDatasetMeta(dsIndex);
-          meta.data.forEach((bar, i)=>{
-            const val = ds.data[i];
-            ctx.save();
-            ctx.font = "11px Segoe UI";
-            ctx.fillStyle = "#33363C";
-            ctx.textAlign = "center";
-            ctx.fillText(fmtM(val), bar.x, bar.y - 6);
-            ctx.restore();
-          });
-        });
-      }
-    }]
+    plugins:[etiquetasBarras]
   });
 }
 
-// Inicializar al cargar
-window.addEventListener('DOMContentLoaded', actualizarDashboard);
+/* ============================================================
+   PESTAÑA GENERAL (acumulado de todos los meses)
+   ============================================================ */
+function totalesGenerales(){
+  const filas = MESES.map(m => ({m, c: calcularMes(m)}));
+  const meta = filas.reduce((a,f)=>a+f.m.metaTotal,0);
+  const real = filas.reduce((a,f)=>a+f.m.recupReal,0);
+  // Esperado al corte: meta completa de los meses cerrados + meta proporcional del mes en curso
+  const esperado = filas.reduce((a,f)=>a+(f.c.cerrado ? f.m.metaTotal : f.c.esperado),0);
+  const rubros = MESES[0].rubros.map((r,i)=>({
+    nombre: r.nombre,
+    meta: MESES.reduce((a,m)=>a+m.rubros[i].meta,0),
+    real: MESES.reduce((a,m)=>a+m.rubros[i].real,0)
+  }));
+  return {filas, meta, real, esperado, brecha: real - esperado,
+          desviacion: esperado > 0 ? (real - esperado)/esperado : 0,
+          pct: meta ? real/meta : 0, rubros,
+          cerrados: filas.filter(f=>f.c.cerrado).length};
+}
+
+function htmlGeneral(t){
+  const enCurso = t.filas.length - t.cerrados;
+  const [luz, estadoTxt] = semaforo(t.desviacion);
+  const filasMes = t.filas.map(({m,c})=>{
+    const esp = c.cerrado ? m.metaTotal : c.esperado;
+    const brecha = m.recupReal - esp;
+    return `<tr>
+      <td><b>${m.nombre} ${m.anio}</b></td>
+      <td><span class="chip ${m.estado}">${c.cerrado ? "Cerrado" : "En curso"}</span></td>
+      <td class="num">${fmtN(m.metaTotal)}</td>
+      <td class="num">${fmtN(esp)}</td>
+      <td class="num">${fmtN(m.recupReal)}</td>
+      <td class="num"><span class="pct-tag${clasePct(c.pct)}">${fmtPct(c.pct)}</span></td>
+      <td class="num ${brecha >= 0 ? "pos" : "neg"}">${brecha >= 0 ? "+" : ""}${fmtN(brecha)}</td>
+      ${m.rubros.map(r=>`<td class="num">${fmtN(r.real)}</td>`).join("")}
+    </tr>`;
+  }).join("");
+  const filasRubro = t.rubros.map(r=>{
+    const p = r.meta ? r.real/r.meta : 0;
+    const saldo = r.meta - r.real;
+    return `<tr><td>${r.nombre}</td><td class="num">${fmtN(r.meta)}</td><td class="num">${fmtN(r.real)}</td>
+      <td class="num"><span class="pct-tag${clasePct(p)}">${fmtPct(p)}</span></td>
+      <td class="num ${saldo <= 0 ? "pos" : ""}">${saldo <= 0 ? "+" + fmtN(-saldo) + " exc." : fmtN(saldo)}</td></tr>`;
+  }).join("");
+
+  return `
+  <div class="kpis">
+    <div class="kpi rojo"><div class="label">Meta acumulada</div><div class="valor">${fmtM(t.meta)}</div><div class="nota">${t.filas.length} mes(es)</div></div>
+    <div class="kpi verde"><div class="label">Recuperado acumulado</div><div class="valor verde-txt">${fmtM(t.real)}</div></div>
+    <div class="kpi gris"><div class="label">% Cumplimiento acumulado</div><div class="valor">${fmtPct(t.pct)}</div><div class="nota">sobre la meta de todos los meses</div></div>
+    <div class="kpi gris"><div class="label">Esperado al corte</div><div class="valor">${fmtM(t.esperado)}</div><div class="nota">meses cerrados + avance lineal del mes en curso</div></div>
+    <div class="kpi rojo"><div class="label">Brecha vs. esperado</div><div class="valor ${t.brecha >= 0 ? "verde-txt" : "rojo-txt"}">${t.brecha >= 0 ? "+" : ""}${fmtM(t.brecha)}</div></div>
+    <div class="kpi gris"><div class="label">Meses</div><div class="valor">${t.filas.length}</div><div class="nota">${t.cerrados} cerrado(s) · ${enCurso} en curso</div></div>
+  </div>
+
+  <div class="semaforo">
+    <div class="luz ${luz}"></div>
+    <div class="texto"><span class="estado">${estadoTxt}</span><span>En lo que va desde septiembre, la recuperación acumulada (${fmtM(t.real)}) está ${fmtM(Math.abs(t.brecha))} ${t.brecha >= 0 ? "por encima" : "por debajo"} de lo esperado al corte (${fmtPct(Math.abs(t.desviacion))}).</span></div>
+  </div>
+
+  <div class="card" style="margin-bottom:24px;">
+    <h2>Resumen por mes</h2>
+    <div class="card-sub">Cifras en $ millones COP · "Esperado al corte" = meta completa si el mes cerró, o la meta proporcional a los días hábiles transcurridos si está en curso</div>
+    <div class="tabla-scroll"><table class="tabla-rubros">
+      <thead><tr>
+        <th>Mes</th><th>Estado</th><th class="num">Meta</th><th class="num">Esperado al corte</th><th class="num">Recuperado</th>
+        <th class="num">% Meta</th><th class="num">Brecha vs. esperado</th>
+        ${MESES[0].rubros.map(r=>`<th class="num">${r.nombre}</th>`).join("")}
+      </tr></thead>
+      <tbody>${filasMes}</tbody>
+      <tfoot><tr>
+        <td>Total acumulado</td><td></td><td class="num">${fmtN(t.meta)}</td><td class="num">${fmtN(t.esperado)}</td>
+        <td class="num">${fmtN(t.real)}</td><td class="num">${fmtPct(t.pct)}</td>
+        <td class="num ${t.brecha >= 0 ? "pos" : "neg"}">${t.brecha >= 0 ? "+" : ""}${fmtN(t.brecha)}</td>
+        ${t.rubros.map(r=>`<td class="num">${fmtN(r.real)}</td>`).join("")}
+      </tr></tfoot>
+    </table></div>
+  </div>
+
+  <div class="grid-2 parejo">
+    <div class="card">
+      <h2>Meta vs. recuperado por mes</h2>
+      <div class="card-sub">Comparativo mensual</div>
+      <div class="chart-box"><canvas data-chart="meses"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Recuperado por rubro y mes</h2>
+      <div class="card-sub">Composición de lo recuperado en cada mes</div>
+      <div class="chart-box"><canvas data-chart="composicion"></canvas></div>
+    </div>
+  </div>
+
+  <div class="grid-2 parejo">
+    <div class="card">
+      <h2>Acumulado por rubro</h2>
+      <div class="card-sub">Suma de todos los meses desde septiembre ($ millones COP)</div>
+      <div class="tabla-scroll"><table class="tabla-rubros">
+        <thead><tr><th>Rubro</th><th class="num">Meta</th><th class="num">Recuperado</th><th class="num">% Avance</th><th class="num">Saldo</th></tr></thead>
+        <tbody>${filasRubro}</tbody>
+        <tfoot><tr><td>Total</td><td class="num">${fmtN(t.meta)}</td><td class="num">${fmtN(t.real)}</td><td class="num">${fmtPct(t.pct)}</td>
+          <td class="num ${t.meta - t.real <= 0 ? "pos" : ""}">${t.meta - t.real <= 0 ? "+" + fmtN(t.real - t.meta) + " exc." : fmtN(t.meta - t.real)}</td></tr></tfoot>
+      </table></div>
+    </div>
+    <div class="card">
+      <h2>Meta vs. recuperado acumulado por rubro</h2>
+      <div class="card-sub">Todos los meses sumados</div>
+      <div class="chart-box"><canvas data-chart="rubrosAcum"></canvas></div>
+    </div>
+  </div>`;
+}
+
+function chartsGeneral(panel, t){
+  const canvas = k => panel.querySelector(`[data-chart="${k}"]`);
+  const etiquetasMes = MESES.map(m => m.nombre + (m.estado === "cerrado" ? "" : " (en curso)"));
+  const barras = (labels, datasets, apilado) => ({
+    type:'bar',
+    data:{labels, datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom'}, tooltip:opcionesTooltipM},
+      scales:{x:{stacked:!!apilado}, y:{stacked:!!apilado, title:{display:true, text:'$ Millones COP'}, beginAtZero:true}}
+    },
+    plugins:[etiquetasBarras]
+  });
+
+  new Chart(canvas("meses"), barras(etiquetasMes, [
+    {label:'Meta', data: MESES.map(m=>m.metaTotal), backgroundColor:'#E4E6E9'},
+    {label:'Recuperado', data: MESES.map(m=>m.recupReal), backgroundColor:'#D0021B'}
+  ]));
+  new Chart(canvas("composicion"), barras(etiquetasMes,
+    MESES[0].rubros.map((r,i)=>({label:r.nombre, data: MESES.map(m=>m.rubros[i].real), backgroundColor:COLORES_RUBRO[i]})),
+    true));
+  new Chart(canvas("rubrosAcum"), barras(t.rubros.map(r=>r.nombre), [
+    {label:'Meta acumulada', data: t.rubros.map(r=>r.meta), backgroundColor:'#E4E6E9'},
+    {label:'Recuperado acumulado', data: t.rubros.map(r=>r.real), backgroundColor:'#D0021B'}
+  ]));
+}
+
+/* ============================================================
+   NAVEGACIÓN ENTRE PESTAÑAS
+   ============================================================ */
+const PESTANAS = [];
+
+function encabezado(sub, corte, frase){
+  document.getElementById('hdr-sub').textContent = sub;
+  document.getElementById('hdr-corte').innerHTML = corte.map(([l,v]) => `<span>${l}: <b>${v}</b></span>`).join("");
+  document.getElementById('hdr-frase').textContent = frase;
+}
+
+function mostrar(id){
+  const p = PESTANAS.find(x => x.id === id) || PESTANAS[0];
+  PESTANAS.forEach(x => {
+    x.boton.classList.toggle('activa', x === p);
+    x.panel.classList.toggle('activa', x === p);
+  });
+  if(!p.listo){ p.render(); p.listo = true; } // los charts se crean ya visibles para que tomen tamaño
+  p.header();
+  if(location.hash !== "#" + p.id) history.replaceState(null, "", "#" + p.id);
+}
+
+function iniciar(){
+  const tabs = document.getElementById('tabs');
+  const paneles = document.getElementById('paneles');
+
+  function agregar(id, etiqueta, chip, render, header){
+    const boton = document.createElement('button');
+    boton.className = "tab";
+    boton.innerHTML = etiqueta + (chip ? ` <span class="chip ${chip[0]}">${chip[1]}</span>` : "");
+    boton.onclick = () => mostrar(id);
+    tabs.appendChild(boton);
+    const panel = document.createElement('section');
+    panel.className = "tab-panel";
+    paneles.appendChild(panel);
+    PESTANAS.push({id, boton, panel, render: () => render(panel), header, listo:false});
+  }
+
+  const t = totalesGenerales();
+  const ultimo = MESES[MESES.length-1];
+  agregar("general", "General", null,
+    panel => { panel.innerHTML = htmlGeneral(t); chartsGeneral(panel, t); },
+    () => encabezado(
+      `General · Acumulado desde ${MESES[0].nombre.toLowerCase()} ${MESES[0].anio}`,
+      [["Corte", fmtFechaLarga(aFecha(ultimo.fechaCorte))], ["Meses", MESES.length],
+       ["Cerrados", t.cerrados], ["En curso", MESES.length - t.cerrados]],
+      `Meta acumulada: ${fmtM(t.meta)} | Recuperado acumulado: ${fmtM(t.real)} (${fmtPct(t.pct)})`));
+
+  MESES.forEach(m => {
+    const c = calcularMes(m);
+    agregar(idTab(m), m.nombre, c.cerrado ? ["cerrado","Cerrado"] : ["en_curso","En curso"],
+      panel => { panel.innerHTML = htmlMes(m, c); chartsMes(panel, m, c); },
+      () => encabezado(
+        `${m.nombre} ${m.anio} · ${c.cerrado ? "Cierre del mes" : "Seguimiento de meta mensual"}`,
+        [["Corte", fmtFechaLarga(c.fechaCorte)], ["Días hábiles del mes", c.totalDias],
+         ["Días hábiles transcurridos", c.transcurridos]],
+        `Meta mensual: ${fmtM(m.metaTotal)} | Recuperación ${c.cerrado ? "final" : "acumulada"}: ${fmtM(m.recupReal)}`));
+  });
+
+  mostrar(location.hash.slice(1) || "general");
+  window.addEventListener('hashchange', () => mostrar(location.hash.slice(1)));
+}
+
+window.addEventListener('DOMContentLoaded', iniciar);
 </script>
 </body>
 </html>
